@@ -1,0 +1,17 @@
+{
+  "_comment": "Minimal Claude Code settings.json showing how to wire the hook. Drop into ~/.claude/settings.json or merge into your existing config. Do not commit your real settings.json with allowlists / tokens.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node /home/<user>/.claude/hooks/anti-block-inject.js",
+            "timeout": 3
+          }
+        ]
+      }
+    ]
+  }
+}

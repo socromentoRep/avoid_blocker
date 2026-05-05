@@ -1,0 +1,24 @@
+# Secrets
+*.credentials.json
+.credentials.json
+**/.credentials.json
+.env
+.env.*
+
+# Local copies / runtime artifacts
+*.bak
+*.bak-*
+*.bak.*
+*.log
+
+# Real settings.json should not be tracked — contains user-specific
+# allowlists and may carry tokens via env. Commit `examples/` only.
+settings/
+**/settings/acc*.json
+
+# Editor / OS junk
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*~
