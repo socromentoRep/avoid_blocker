@@ -1,0 +1,23 @@
+# avoid_blocker — Python dependencies
+# Install: pip install -r requirements.txt
+#
+# Core (TLS impersonation + scrape + proxy):
+curl_cffi>=0.7.0
+PyYAML>=6.0
+requests>=2.31.0
+lzstring>=1.0.4              # for anti_block.scrape.aramuz_state
+
+# CloakBrowser (anti-detect Chromium with C++ patches against fingerprinting):
+# Install via: pip install cloakbrowser
+# Note: requires a Chromium binary; see https://cloakbrowser.com/docs
+cloakbrowser>=0.3.26
+
+# hCaptcha solver (only if you use anti_block.captcha.hcaptcha):
+# tls_client + scipy + numpy installed by captcha/install_hcaptcha_solver.sh
+# Listed here for completeness if you skip the install script:
+tls_client>=1.0.0
+scipy>=1.10
+numpy>=1.24
+
+# Optional (for warmup_browser.js — Node, not Python):
+# npm install playwright
