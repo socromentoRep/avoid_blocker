@@ -1,254 +1,291 @@
 # avoid_blocker
 
-Toolkit for bypassing anti-bot blockers (Cloudflare WAF, DataDome, Akamai
-Bot Manager, Geetest, hCaptcha, TLS-level filtering) without paying for
-2captcha / CapSolver / ScrapingBee. Python + Node.js, MIT-license OSS
-solvers under the hood.
+**Free OSS toolkit** для обхода anti-bot блокеров (Cloudflare WAF, DataDome, Akamai
+Bot Manager, Geetest, hCaptcha, TLS-fingerprint фильтры) — **без paid API
+сервисов** типа 2captcha / CapSolver / ScrapingBee / ZenRows.
 
-Built for long-running Claude Code agent sessions that scrape/probe
-casinos, e-commerce, fintech sites — but the tools are project-agnostic
-and usable from any Python automation pipeline.
+Использует только open-source компоненты (MIT/BSD licenses) которые работают
+**локально**. Все captcha solvers и antidetect browser в комплекте — clone +
+build, никаких подписок и API keys.
 
-## Status
+Работает как Python библиотека или CLI, плюс Claude Code hook + wrapper
+для AI-агентных пайплайнов.
 
-**Alpha**. Battle-tested in one production project (PaymentScout — gambling
-PSP intelligence). Not all blockers covered; some require manual
-configuration per project (especially registration captchas requiring
-HSW tokens).
+## TL;DR — что ты получаешь бесплатно
+
+Все компоненты toolkit'а — **free OSS**:
+
+| Что | Какой OSS под капотом | Стоимость |
+|---|---|---|
+| TLS impersonation (Chrome 131 Android) | `curl_cffi` (MIT) | $0 |
+| Anti-detect browser | `cloakbrowser` (MIT) — Chromium с C++ source-level патчами | $0 |
+| Geetest v3/v4 solver | `chaser-gt` (Rust, MIT) | $0 |
+| hCaptcha solver | `korolossamy/hcaptcha-ai-solver` (Python) | $0 |
+| Aramuz cloaking decoder | own code | $0 |
+| JS bundle parser | own code | $0 |
+| Cookie warmup runner | own bash + Playwright | $0 |
+| Claude Code session hook | own JS | $0 |
+| Account fallback wrapper | own bash | $0 |
+
+Единственное что не входит в репо но **может** понадобиться (опционально):
+- **Residential / mobile proxy** — для качественного IP. Можно free options
+  (mobile DIY на старом Android, free residential pools, VPN), можно платных
+  ($50-170/мес за SOAX/BrightData/IPRoyal). Toolkit работает **с любым**
+  SOCKS5/HTTP proxy — задаёшь через env vars.
+- **VPS** — любой Linux/WSL, $5/мес от любого хостера или свой домашний box.
+
+## Что это покрывает
+
+| Блокер | Подход | Tool |
+|---|---|---|
+| TLS-fingerprint WAF (Qrator, custom) | curl_cffi с Chrome 131 Android | `anti_block.tls.cli` |
+| Cloudflare Turnstile / Bot Fight Mode | Cookie warmup + CloakBrowser | `warmup/`, `anti_block.browser.cloak` |
+| DataDome device check | CloakBrowser + per-call SOAX rotation | `anti_block.browser.cloak`, `anti_block.proxy.soax_direct` |
+| Akamai `_abck` (basic) | CloakBrowser с реальным Chrome fingerprint | `anti_block.browser.cloak` |
+| Geetest v3 / v4 (slide / icon / AI) | OSS chaser-gt Rust solver | `anti_block.captcha.geetest_chaser` |
+| hCaptcha (включая registration forms) | OSS hcaptcha-ai-solver | `anti_block.captcha.hcaptcha` |
+| Aramuz / cloaking redirects | Pinia LZString state decoder | `anti_block.scrape.aramuz_state` |
+| Hidden form fields (registration submit disabled) | DOM inspector JS snippet | `anti_block.browser.inspect_form.js` |
+| 1xbet platform public xpay endpoint | API client | `anti_block.scrape.xpay` |
+| SOAX session HTTP 500 / banned IP | Per-call sessionid rotation | `anti_block.proxy.soax_direct` |
+
+**Что НЕ покрывает** (нужны paid сервисы или manual workarounds):
+- reCAPTCHA v2/v3/Enterprise (Google) — нет рабочего free OSS solver'а 2026.
+  Use VNC manual или paid 2captcha/CapSolver.
+- Akamai с serious sensor_data validation, PerimeterX `_px3`, FunCaptcha
+  (Arkose) — paid solvers (CapSolver $3-5/1k) для гарантированной генерации.
+- Server-side block ВСЕХ datacenter ASN — нужен residential ISP-tier proxy
+  (paid $5-15/GB) или DIY (Raspberry Pi на чьём-то домашнем интернете).
+
+## Quick start (минимальный free setup)
+
+Достаточно: Linux/macOS/WSL с Python 3.10+, Node.js, Rust toolchain (rustup).
+Всё опциональное добавляется когда понадобится.
+
+```bash
+# 1. Clone
+git clone https://github.com/socromentoRep/avoid_blocker.git
+cd avoid_blocker
+
+# 2. Python deps (free OSS pip packages)
+pip install -r requirements.txt
+
+# 3. Captcha solvers (clone OSS репо + build, free)
+bash captcha/install_chaser_gt.sh           # Geetest, Rust binary
+bash captcha/install_hcaptcha_solver.sh     # hCaptcha, Python clone
+
+# 4. (Optional) Local proxy bridges if you have SOCKS5+auth provider
+#    See setup/setup_soax_bridges.sh — adapt to any provider
+```
+
+Готово. Всё что в `anti_block/` теперь импортируемо как Python пакет.
+
+### Use as Python library
+
+```python
+# 1. TLS impersonation (no proxy required for direct sites)
+from anti_block.tls import TLSScoutClient
+client = TLSScoutClient(soax_geo='IN')  # geo only matters if you set env vars
+resp = client.get('https://example.com/api/data')
+
+# 2. Aramuz cloaking platform decode (works on any input HTML)
+from anti_block.scrape.aramuz_state import decode_pinia_state, extract_endpoints
+state = decode_pinia_state(html_string)
+endpoints = extract_endpoints(state)  # {PIQ_HOST, API_HOST, merchantId, ...}
+
+# 3. Geetest v4 solve (free, no API keys)
+from anti_block.captcha.geetest_chaser import GeetestChaser
+solution = GeetestChaser().solve(captcha_id, risk_type='ai')
+
+# 4. hCaptcha solve (free, no API keys)
+from anti_block.captcha.hcaptcha import solve_hcaptcha
+result = solve_hcaptcha(sitekey, host)  # proxy optional
+
+# 5. CloakBrowser (free MIT, anti-detect Chromium)
+from anti_block.browser.cloak import fetch_page
+result = fetch_page('https://target.com/', geo='IN')  # geo only used if bridge configured
+```
+
+### Use as CLI
+
+```bash
+# Verify TLS fingerprint matches real Chrome 131 Android
+python3 -m anti_block.tls.cli check --no-proxy
+
+# GET request via TLS impersonation
+python3 -m anti_block.tls.cli get https://example.com/
+
+# Decode Aramuz Pinia state from HTML
+python3 -m anti_block.scrape.aramuz_state https://target.com/ --geo IN
+
+# Solve Geetest captcha
+python3 -m anti_block.captcha.geetest_chaser <captcha_id> ai
+
+# Solve hCaptcha
+python3 -m anti_block.captcha.hcaptcha <sitekey> <host>
+```
+
+## С proxy (любой провайдер)
+
+Toolkit работает с **любым** SOCKS5/HTTP proxy — provider-agnostic.
+
+### Вариант A: SOAX residential (если у тебя есть аккаунт)
+
+```bash
+export SOAX_RES_PACKAGE="your-package-id"
+export SOAX_RES_PASSWORD="your-password"
+# Optional: SOAX_RES_HOST (default: proxy.soax.com), SOAX_RES_PORT (default: 5000)
+
+# Start local SOCKS5 bridges (chromium can't auth SOCKS5, so we strip auth via gost):
+bash setup/setup_soax_bridges.sh
+# Output prints: export ANTIBLOCK_BRIDGE_PORTS="IN:11080,BR:11082,..."
+
+# Now anti_block.tls/scrape/browser will route through bridges per geo
+python3 -m anti_block.tls.cli get https://example.com/ --geo IN
+```
+
+### Вариант B: любой другой proxy (BrightData, IPRoyal, mobile DIY, VPN, etc)
+
+Toolkit ожидает **либо** `SOAX_RES_*` env vars (для direct SOCKS5 with auth),
+**либо** `ANTIBLOCK_BRIDGE_PORTS="GEO:port,GEO:port,..."` env var (для local
+listeners без auth).
+
+Если твой provider даёт SOCKS5 без auth (или auth через IP whitelist) — просто
+запусти его на любом порту и укажи в `ANTIBLOCK_BRIDGE_PORTS`. Адаптируй
+`setup/setup_soax_bridges.sh` если нужно поднять gost-listeners.
+
+### Вариант C: совсем без proxy (для тестов)
+
+Многие сайты пускают TLS-correct запросы без proxy. Просто пропусти env var
+setup — `TLSScoutClient` сделает direct connection, `cookie_warmup.sh`
+будет работать с твоим обычным IP.
+
+## Cookie warmup — free path
+
+Cookie warmup поддерживает любой anti-detect browser с persistent profiles.
+Default рекомендация — **CloakBrowser** (free MIT, уже в `requirements.txt`).
+Если используешь Dolphin Anty / GoLogin / AdsPower / Camoufox — также работает.
+
+```bash
+# 1. Edit warmup/cookie_warmup.sh — fill SITE_URLS array with your sites:
+#    [profile_name]="https://homepage.com"
+
+# 2. Add to cron (every 6 hours, between your scan batches):
+crontab -e
+# 0 3,9,15,21 * * * /path/to/avoid_blocker/warmup/cookie_warmup.sh
+
+# 3. (Optional) Add Dolphin Anty integration if you use it.
+#    For CloakBrowser-only setup, edit warmup_browser.js to use:
+#    `chromium.launchPersistentContext('/path/to/profile')` instead of CDP connect.
+```
+
+Если не хочешь возиться с anti-detect browser — toolkit и без warmup пройдёт
+многие WAFs через TLS impersonation + free residential alternative.
+
+## Claude Code agent integration (для AI-pipeline'ов)
+
+Если ты используешь Claude Code (Cursor / native CLI) для автоматизации
+scout / scrape — есть hook который инжектит project-specific cheatsheet в
+каждую агентную сессию.
+
+```bash
+# 1. Install hook + wrapper:
+bash deploy.sh    # копирует hooks/ + wrapper/ в ~/.claude/hooks и ~/bin
+
+# 2. Set env var pointing to YOUR cheatsheet:
+export ANTI_BLOCK_HOOK_CHEATSHEET=/path/to/your-cheatsheet.md
+export ANTI_BLOCK_HOOK_CWD_PREFIX=/path/to/your/project
+
+# 3. Wire hook in ~/.claude/settings.json (see examples/settings.minimal.json)
+
+# 4. Write cheatsheet — Site→Tool quick map for your project.
+#    Template: examples/cheatsheet.example.md
+#    Goal: keep it ~1-2k tokens, point to commands not paragraphs.
+```
+
+При следующем запуске Claude Code session увидит cheatsheet как
+`additionalContext` и будет использовать tools без блужданий.
+
+`wrapper/claude-with-fallback.sh` отдельно — оборачивает `claude` CLI
+переключателем acc1↔acc2 при rate-limit (если у тебя несколько аккаунтов).
+
+## Архитектура
+
+```
+Your scraper / agent / Claude Code
+        │
+        ▼  (when blocker hit)
+   anti_block.<module>.<tool>
+        │
+   ┌────┴────┬─────────┬──────────┬──────────┐
+   │  TLS    │ Browser │ Solvers  │  Proxy   │
+   │ ja3/ja4 │ Cloak   │ chaser-gt│ rotation │
+   │curl_cffi│         │ hCaptcha │          │
+   └────┬────┴────┬────┴────┬─────┴────┬─────┘
+        │         │         │          │
+        └─────────┴─────────┴──────────┘
+                  │
+            (env-driven)
+                  │
+        ┌─────────┴─────────┐
+        │ Local bridges     │  ANTIBLOCK_BRIDGE_PORTS="GEO:port,..."
+        │ (gost SOCKS5)     │  
+        └─────────┬─────────┘
+                  │
+        ┌─────────┴─────────┐
+        │ Your proxy        │  SOCKS5/HTTP — anything: SOAX, BrightData,
+        │ provider          │  IPRoyal, mobile DIY, VPN, free pools
+        └───────────────────┘
+```
 
 ## What's inside
 
 ```
 avoid_blocker/
-├── hooks/anti-block-inject.js      # Claude Code hook — injects cheatsheet
-├── wrapper/claude-with-fallback.sh # Claude CLI wrapper — acc1↔acc2 fallback
-├── anti_block/                     # ← The actual bypass tools (Python)
-│   ├── tls/                        # TLS-fingerprint impersonation (curl_cffi)
-│   ├── proxy/                      # SOAX direct + sessionid rotation
-│   ├── browser/                    # CloakBrowser launcher + DOM helpers
-│   ├── scrape/                     # JS bundle parsing, SSR state decoders
-│   └── captcha/                    # OSS Geetest + hCaptcha solver wrappers
+├── hooks/anti-block-inject.js      # Claude Code SessionStart hook
+├── wrapper/claude-with-fallback.sh # Claude CLI acc1↔acc2 fallback
+├── anti_block/                     # ── Bypass tools (Python) ──
+│   ├── tls/                        #    TLS-fingerprint impersonation
+│   ├── proxy/                      #    SOAX direct + sessionid rotation
+│   ├── browser/                    #    CloakBrowser launcher + DOM helpers
+│   ├── scrape/                     #    JS bundle / SSR state decoders
+│   └── captcha/                    #    Free OSS solver wrappers
 ├── captcha/
-│   ├── install_chaser_gt.sh        # Geetest v3/v4 solver (Rust, MIT)
-│   └── install_hcaptcha_solver.sh  # hCaptcha solver (Python, no API keys)
-├── warmup/                         # Cookie warmup runner (anti-WAF)
-├── setup/setup_soax_bridges.sh     # Local SOCKS5 bridges for SOAX residential
-├── examples/                       # cheatsheet template + Claude settings example
+│   ├── install_chaser_gt.sh        # Geetest solver clone+build (Rust)
+│   └── install_hcaptcha_solver.sh  # hCaptcha solver clone (Python)
+├── warmup/                         # Cookie warmup runner + Playwright
+├── setup/setup_soax_bridges.sh     # Optional SOCKS5-with-auth bridges
+├── examples/                       # cheatsheet template + Claude settings
 ├── deploy.sh                       # Hook + wrapper installer (idempotent)
 └── requirements.txt
 ```
 
-## Quick start
+## Requirements
 
-### 1. Install Python deps
+Minimum (для core tools):
+- Python 3.10+
+- `pip install -r requirements.txt`
 
-```bash
-pip install -r requirements.txt
-```
-
-### 2. Configure your residential proxy (SOAX example)
-
-If you use SOAX residential proxies (or any SOCKS5 provider with username-
-based geo routing), set up local SOCKS5 bridges so chromium-based browsers
-(which don't support SOCKS5 with auth) can connect:
-
-```bash
-export SOAX_RES_PASSWORD="your-soax-password"
-export SOAX_RES_PACKAGE="your-soax-package-id"
-bash setup/setup_soax_bridges.sh
-```
-
-This starts gost listeners on `127.0.0.1:11080-11090` (one per geo).
-The script prints the env var to set:
-
-```bash
-export ANTIBLOCK_BRIDGE_PORTS="IN:11080,BR:11082,DE:11085,GB:11088,..."
-```
-
-If you use a different proxy provider — write a similar bridge-setup
-script. The tools here only need:
-- `ANTIBLOCK_BRIDGE_PORTS` env var (geo→port mapping), or
-- `SOAX_RES_PACKAGE` + `SOAX_RES_PASSWORD` env vars (for direct SOCKS5 auth via curl_cffi).
-
-### 3. Install captcha solvers (optional)
-
-```bash
-bash captcha/install_chaser_gt.sh           # Geetest (Rust)
-bash captcha/install_hcaptcha_solver.sh     # hCaptcha (Python)
-```
-
-### 4. Use as a Python module
-
-```python
-# TLS impersonation HTTP-only fetch (bypasses Qrator, TLS-WAFs)
-from anti_block.tls import TLSScoutClient
-client = TLSScoutClient(soax_geo='IN')
-resp = client.get('https://target-with-tls-waf.com/api/data')
-
-# Per-call SOAX session rotation (when current IP got banned)
-from anti_block.proxy.soax_direct import get_with_retry
-status, body, headers = get_with_retry('https://target.com/', geo='IN', max_retries=5)
-
-# Decode Aramuz cloaking platform state (find real backend behind redirect chain)
-from anti_block.scrape.aramuz_state import decode_pinia_state, extract_endpoints
-state = decode_pinia_state(html)
-endpoints = extract_endpoints(state)  # → {PIQ_HOST, API_HOST, merchantId, ...}
-
-# Solve Geetest v4
-from anti_block.captcha.geetest_chaser import GeetestChaser
-solution = GeetestChaser().solve(captcha_id, risk_type='ai', proxy_url=soax_url)
-
-# Solve hCaptcha
-from anti_block.captcha.hcaptcha import solve_hcaptcha
-result = solve_hcaptcha(sitekey, host, proxy='socks5h://127.0.0.1:11088')
-```
-
-### 5. Use as CLI
-
-```bash
-# Verify TLS fingerprint matches real Android Chrome 131
-python3 -m anti_block.tls.cli check --geo IN
-
-# GET request via TLS impersonation
-python3 -m anti_block.tls.cli get https://example.com/ --geo IN
-
-# Direct SOAX call with auto session rotation on tunnel error
-python3 -m anti_block.proxy.soax_direct get https://example.com/ --geo IN --retries 5
-
-# Decode window._pinia state from Aramuz-cloaked casino mirror
-python3 -m anti_block.scrape.aramuz_state https://mirror-domain.com/ --geo RS --use-bridge
-
-# Solve Geetest captcha (returns JSON token)
-python3 -m anti_block.captcha.geetest_chaser <captcha_id> ai
-
-# Solve hCaptcha
-python3 -m anti_block.captcha.hcaptcha <sitekey> <host> --proxy socks5h://127.0.0.1:11088
-```
-
-## Two layers of how this works
-
-### Layer 1 — Avoidance (most important)
-
-For Cloudflare / DataDome / Akamai — we **don't solve captchas**, we
-**avoid them appearing in the first place**.
-
-Three mechanisms:
-
-1. **Cookie warmup cron** (`warmup/cookie_warmup.sh`) — every 6 hours
-   opens homepage in anti-detect browser profile, simulates browsing,
-   keeps `cf_clearance` / `_abck` / `dd_session` cookies fresh.
-   WAF trusts the session and skips the challenge for production scans.
-
-2. **Anti-detect browser** (`anti_block/browser/cloak.py`, CloakBrowser
-   open-source) — Chromium with C++-level fingerprint patches that
-   simulates a real device. Open homepage in-flight to grab cookies if
-   no persistent profile available.
-
-3. **TLS-fingerprint impersonation** (`anti_block/tls/`) — `curl_cffi` with
-   exact Android Chrome 131 JA3/JA4. Some WAFs reject only on TLS
-   handshake; with correct fingerprint, you pass through to the API
-   directly without ever loading JS.
-
-### Layer 2 — Solving (when avoidance fails)
-
-For Geetest and hCaptcha — when avoidance doesn't work and a captcha
-modal actually appears — we use **free OSS solvers that run locally**:
-
-- **chaser-gt** (Rust, MIT) — solves Geetest v3/v4 (slide / icon /
-  gobang / AI). Same approach as paid services, just published in OSS.
-  https://github.com/0xchasercat/chaser-gt
-- **hcaptcha-ai-solver** (Python) — uses tls_client + ML motion data
-  generation. No API keys.
-  https://github.com/korolossamy/hcaptcha-ai-solver
-
-Trade-offs vs paid (2captcha / CapSolver):
-- ✅ Free, no API keys
-- ✅ Runs locally
-- ❌ 85-95% success rate (vs 99% for paid)
-- ❌ May lag behind captcha-engine updates (OSS gets patched, but with delay)
-
-For research / reconnaissance pipelines (low-volume) — OSS is fine.
-For high-traffic production arbitrage — paid is more reliable.
-
-## Hook + wrapper (existing infrastructure layer)
-
-Pre-existing in this repo, unchanged by the toolkit additions:
-
-- **`hooks/anti-block-inject.js`** — Claude Code hook that injects
-  a project-specific cheatsheet (markdown file) into every agent session
-  via `additionalContext`. Configure via env vars:
-
-  ```
-  ANTI_BLOCK_HOOK_CHEATSHEET=/path/to/your-cheatsheet.md   # required
-  ANTI_BLOCK_HOOK_CWD_PREFIX=/path/to/your/project          # only fire for this project
-  ANTI_BLOCK_HOOK_PROBE_PATH=/path/to/anti_block            # sanity-check that toolkit installed
-  ```
-
-  The cheatsheet should map blockers → tool/command. Example:
-  `examples/cheatsheet.example.md`.
-
-- **`wrapper/claude-with-fallback.sh`** — runs `claude` CLI with two
-  `CLAUDE_CONFIG_DIR` profiles, switches on rate-limit detection.
-  See `README.md` section in main repo for env var setup.
-
-- **`deploy.sh`** — copies hook + wrapper into `~/.claude/hooks/` and
-  `~/bin/`. Does NOT touch your `settings.json` or install Python deps.
-  Run `pip install -r requirements.txt` separately if you use the
-  `anti_block/` toolkit.
-
-## What's NOT covered
-
-These blockers require either paid services or manual workarounds:
-
-| Blocker | Status |
-|---|---|
-| reCAPTCHA v2/v3 (Google) | No free OSS solver works reliably in 2026. Use VNC manual or pay 2captcha/CapSolver. |
-| Akamai `_abck` (sensor_data generation) | Free path is "real Chrome via CDP-clean tools" (nodriver, patchright, rebrowser-playwright). For 99% generation needs paid (capsolver $3-5/1k). |
-| PerimeterX `_px3` | Same as Akamai — free via real-Chrome-fingerprint, paid for guaranteed gen. |
-| FunCaptcha (Arkose Labs) | Paid CapSolver-only currently. |
-| Server-side IP block of ALL datacenter ASN | Need residential ISP-tier proxy (BrightData/IPRoyal/etc, paid $5-15/GB) or DIY Raspberry Pi at someone's home. |
-| Mobile carrier IP requirement | Need 4G mobile proxy (Proxidize DIY $50-100/IP, AirProxy etc). |
-
-For each of these — fallback to manual VNC interaction or pay the
-provider. Document them in your cheatsheet so the agent doesn't loop on
-unsolvable cases.
-
-## Architecture for project integration
-
-```
-Your scraper / agent
-        ↓ (when blocker hit)
-   anti_block.<module>.<tool>
-        ↓ (Python or shell call)
-   ┌─────────┬──────────┬──────────┬───────────┐
-   │ TLS     │ Browser  │ Solvers  │ Proxy     │
-   │ ja3/4   │ Cloak    │ chaser-gt│ SOAX      │
-   │ curl_cffi│ Camoufox │ hCaptcha │ rotation  │
-   └─────────┴──────────┴──────────┴───────────┘
-                          ↓
-                   Bridge :11080-11090 (gost)
-                          ↓
-                   SOAX residential / mobile
-```
-
-Connect Claude Code agent: drop `cheatsheet.md` in your project, point
-the hook at it via `ANTI_BLOCK_HOOK_CHEATSHEET` env var, and your agent
-will see all available tools at session start.
-
-## License
-
-Hook + wrapper: no license set (internal tooling). The `anti_block/`
-Python tools — feel free to use under any permissive terms.
-
-External OSS solvers retain their own licenses:
-- chaser-gt: MIT
-- hcaptcha-ai-solver: see repo
-- CloakBrowser: see repo
-- curl_cffi: MIT
+Optional (на тулзу):
+- Node.js — для `inspect_form.js` (через browser_evaluate) и `warmup_browser.js`
+- Rust toolchain — для chaser-gt (auto-installed by `install_chaser_gt.sh` if missing)
+- `gost` binary — для SOCKS5-with-auth bridges (https://github.com/ginuerzh/gost/releases)
 
 ## Contributing
 
-Add new blocker bypasses? PRs welcome. Keep them:
-- Free / OSS only (paid API wrappers belong in your project, not here)
-- Project-agnostic (no hardcoded paths, geo lists, brand-specific URLs)
-- Documented (one-line use case + code example)
+PRs welcome. Keep contributions:
+- **Free / OSS only** (paid API wrappers belong in your private project)
+- **Project-agnostic** (no hardcoded paths, geo lists, or brand-specific logic
+  — see how `xpay.py` keeps its registry as a starter you extend)
+- **Documented** (one-line use case + code example in module docstring)
+
+## License
+
+Hook + wrapper: no license set (internal tooling, free to fork).
+The `anti_block/` Python tools — feel free to use under any permissive terms.
+
+External OSS dependencies retain their own licenses:
+- chaser-gt: MIT
+- hcaptcha-ai-solver: see repo
+- CloakBrowser: MIT
+- curl_cffi, lzstring, PyYAML: MIT/BSD
