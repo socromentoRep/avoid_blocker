@@ -22,3 +22,17 @@ settings/
 .idea/
 *.swp
 *~
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+.venv/
+venv/
+
+# Build artefacts
+build/
+dist/
+*.egg-info/
